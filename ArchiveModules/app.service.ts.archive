@@ -1,0 +1,297 @@
+import {Inject, Injectable} from '@nestjs/common';
+import {HexGameDto} from "./hex-game/dto/create-hex-game.dto";
+import {Repository} from 'typeorm';
+import {Hex_player} from "./hex-game/player.entity";
+import {Hex_session} from "./hex-game/session.entity";
+import {DatabaseModule} from "./hex-game/database/database.module";
+
+
+import {ClientProxy} from "@nestjs/microservices";
+import {Observable} from "rxjs";
+import {request} from "express";
+import {HexSessionDto} from "./hex-game/dto/create-hex-session.dto";
+import {exec, spawn} from "child_process";
+
+
+
+
+@Injectable()
+export class AppService {
+
+  constructor(
+      @Inject('HEXPLAYER_REPOSITORY')
+      private hexPlayerRepository: Repository<Hex_player>,
+      @Inject('HEXSESSION_REPOSITORY')
+      private hexSessionsRepository: Repository<Hex_session>,
+      // @Inject('MICRO_SERVICE')
+      // private client: ClientProxy,
+  ) {}
+
+
+
+    tone = 0;
+    t1 = 5;
+    cp = "";
+    tst = true;
+
+    net = require('net');
+    port = 7070;
+    host = '192.168.1.71';
+    server = this.net.createServer();
+    sock_global = [];
+    sockets = [];
+
+// ▷ Main Listener
+
+    grp() {
+        let self = this
+        this.server.listen(this.port, this.host, () => {
+            console.log('TCP Server is running on port ' + this.port + '.');
+        });
+        this.server.on('connection', async function(sock) {
+            console.log('CONNECTED: ' + sock.remoteAddress + ':' + sock.remotePort);
+            await self.sockets.push(sock);
+            let user_id = sock.remoteAddress + ':' + sock.remotePort
+            // let bingo = self.findSession(user_id);
+            let hex_session : HexSessionDto = new Hex_session
+            await self.findSession(user_id, self.sockets, hex_session);
+
+            // // let ch = this.findActivatedPlayers(session_id);
+            // sockets.forEach(function(sock, index, array) {
+            //     // if (sock.remoteAddress == 0) {
+            //     sock.write(sock.remoteAddress + ':' + sock.remotePort + " meeh " + '\n');
+            //     // }
+            // });
+
+            sock.on('data', function(data) {
+                console.log('DATA ' + sock.remoteAddress + ': ' + data);
+                self.sockets.forEach(function(sock, index, array) {
+                    // if (sock.remoteAddress == 0) {
+                    sock.write(sock.remoteAddress + ':' + sock.remotePort + " said " + data + '\n');
+                    // }
+                });
+                // Ивент при получении данных
+                // Write the data back to all the connected, the client will receive it as data from the server
+            });
+
+            sock.on('close', async function(data) {
+
+                await self.deleteUserFromSession(user_id);
+
+                let index = await self.sockets.findIndex(function(o) {
+                    return o.remoteAddress === sock.remoteAddress && o.remotePort === sock.remotePort;
+                })
+                if (index !== -1) await self.sockets.splice(index, 1);
+                console.log('CLOSED: ' + sock.remoteAddress + ':' + sock.remotePort);
+            }); // Add a 'close' event handler to this instance of socket
+        });
+
+    }
+
+    // ▷ Sessions
+
+    async findSession(user_id, sockets, hex_session) {
+// console.log(request.connection.remoteAddress, request.connection.remotePort, "ip2")
+        // //Находим максимальное число игроков из сессий
+        const firstUser = await this.hexSessionsRepository
+            .createQueryBuilder("hex_session")
+            .select("MAX(hex_session.players_num)", 'max')
+            .where("hex_session.players_num < 6");
+        const result = await firstUser.getRawOne();
+        const done = await result.max;
+
+        if (done > 5 || done == undefined) {
+            console.log("undef")
+            await this.hexSessionsRepository.save(hex_session)
+            await this.findSession(user_id, sockets, hex_session)
+        }
+        else {
+            console.log(done )
+            await this.findSession_step2(done, user_id, sockets)
+        }
+    }
+
+
+    // Находим сессию с этим числом игроков
+    async findSession_step2(done, user_id, sockets){
+
+        const maxplayerslobby_modify2 = await this.hexSessionsRepository
+            .createQueryBuilder("hex_session")
+            .select()
+            .where("hex_session.players_num = :numx", { numx: done })
+            .update("hex_session")
+            .set({
+                players_id: () => `array_append(players_id, '${String(user_id)}')`,
+                players_num: () => `"players_num" + ${Number(1)}`
+            })
+            .execute();
+
+        const maxplayerslobbyID = await this.hexSessionsRepository
+            .createQueryBuilder("hex_session")
+            .select("players_id")
+            .where("hex_session.players_num = :numx", { numx: done + 1});
+
+        const result2 = await maxplayerslobbyID.getRawOne();
+        // const matches3 = JSON.parse(result2)
+        const matches = await JSON.stringify(result2).slice(16, -3).split('","')
+        // const matches_step2 = matches.slice(16, -3)
+        // const matches_step3 = matches_step2.split('","')
+
+        await console.log (matches);
+        // console.log (matches3);
+
+        //Запускаем сервер для сессии, если игроков в лобби достаточно для запуска
+        if (done == 5) {
+           await this.openGame(matches, sockets)
+        }
+    }
+    //     console.log(result2, "idd")
+
+
+    async openGame(matches, sockets) {
+        console.log("game_opening")
+
+        // let child_process = require('child_process');
+        // child_process('pwd', function callback(error, stdout, stderr) {
+        //     // result
+        // });
+
+        ////
+        const { spawn } = require('child_process');
+        console.log("Server Flow Created");
+        await this.connectClientsToServer();
+
+        // return;
+        // bat.unref();
+        // console.log(`Spawned child process with PID: ${bat.pid}`);
+
+        // await this.createServerInstance()
+
+        matches.forEach(item =>
+        {   console.log(item);
+            sockets.forEach(function(sock, index, array) {
+                console.log(sock.remoteAddress + ':' + sock.remotePort, item);
+                if (sock.remoteAddress + ':' + sock.remotePort == item) {
+                    console.log("true");
+                    sock.write(sock.remoteAddress + ':' + sock.remotePort + " - trying to connect to" + '\n');
+                }
+            });
+        })
+
+        // const port = 4000;
+        // // const bat = spawn('node', ['E:\\Other\\Unreal\\Unreal Projects\\HexCompiled\\WindowsServer\\Hexes1Server.exe', 5000]);
+        // const bat = spawn('E:\\Other\\Unreal\\Unreal Projects\\HexCompiled\\WindowsServer\\Hexes1Server.exe', ['-log']);
+
+    }
+
+    async deleteUserFromSession(user_id) {
+        const duck = await this.hexSessionsRepository
+            .createQueryBuilder("hex_session")
+            .select()
+            .where("hex_session.players_id @> ARRAY[:userx]", { userx: user_id})
+            .update("hex_session")
+            .set({
+                players_id: () => `array_remove(players_id, '${String(user_id)}')`,
+                players_num: () => `"players_num" - ${Number(1)}`
+            })
+            .execute();
+
+        const clearSessionCheck = await this.hexSessionsRepository
+            .createQueryBuilder("hex_session")
+            .select()
+            .where("hex_session.players_num = 0")
+            .delete()
+            .execute();
+        // ! При отключении всех юзеров остаётся пустая *неудалённая* сессия
+    }
+
+
+  getHello(): string {
+      // const net = require('net');
+      // const bat = spawn('cmd.exe', ['/c','G:\\Other\\hex_service\\hex_nest_server\\src\\test.bat']);
+
+      // const runP = exec("./test.bat");
+      // runP.stdout.on("data", (d) => console.log(`${new Date()} : STDOUT => ${d}`));
+      // runP.stderr.on("data", (d) => console.log(`${new Date()} : STDERR => ${d}`));
+      // runP.on("close", () => console.log(`${new Date()} : CHILD ENDED`));
+      return 'G Hello';
+  }
+
+
+  async createServerInstance() {
+    //     const { spawn } = require('child_process');
+    //   console.log("Server Flow Created");
+    // await this.connectClientsToServer();
+    //     const bat = spawn('E:\\Other\\Unreal\\Unreal Projects\\HexCompiled\\WindowsServer\\Hexes1Server.exe', ['-log']);
+    //   return;
+    }
+
+    async connectClientsToServer() {
+        console.log("Connecting Clients To Server");
+
+    }
+
+
+
+    // cct(user_id): Observable<string> {
+    //     const pattern = { cmd: 'sum' };
+    //     const payload = ['eq', user_id];
+    //     return this.client.send<string>(pattern, payload);
+    // }
+
+
+
+
+  // async createNewHexGame(hexgame: HexGameDto) {
+  //   return await this.hexPlayerRepository.save(hexgame);
+  // }
+
+
+
+
+  // ▷ Registration Process
+
+    async checkfor_already_registred(hexgame: HexGameDto) {
+        const IsUserExist = await this.hexPlayerRepository
+            .createQueryBuilder("hex_player")
+            .select("hex_player.login", 'LOGIN')
+            .where("hex_player.login = :Login", {Login: hexgame.login})
+            .getCount() > 0;
+        // if (IsUserExist = true)
+        // {console.log("dd")}
+        await this.register_user(IsUserExist, hexgame)
+        return IsUserExist;
+    }
+
+    async checkfor_already_registred_signin(hexgame: HexGameDto) {
+        const IsUserExist = await this.hexPlayerRepository
+            .createQueryBuilder("hex_player")
+            .select("hex_player.login", 'LOGIN')
+            .where("hex_player.login = :Login", {Login: hexgame.login})
+            .getCount() > 0;
+        if (IsUserExist == true) {
+            const IsPassTrue = await this.hexPlayerRepository
+                .createQueryBuilder("hex_player")
+                .select("hex_player.pass", 'Pass')
+                .where("hex_player.login = :Login", {Login: hexgame.login})
+                .andWhere("hex_player.pass = :Pass", {Pass: hexgame.pass})
+                .getCount() > 0;
+
+            return IsPassTrue;
+        }
+        else {return "User login is not exist"}
+        // if (IsUserExist = true)
+        // {console.log("dd")}
+    }
+
+  async register_user(IsUserExist, hexgame: HexGameDto) {
+      if (IsUserExist != true)
+          {
+              console.log("проводим регистрацию");
+              await this.hexPlayerRepository.save(hexgame)
+          }
+  }
+
+
+}
+

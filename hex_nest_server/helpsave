@@ -1,0 +1,73 @@
+async findSession(user_id, request) {
+console.log(request.connection.remoteAddress, request.connection.remotePort, "ip2")
+      // //Находим максимальное число игроков из сессий
+      const firstUser = this.hexSessionsRepository
+          .createQueryBuilder("hex_session")
+          .select("MAX(hex_session.players_num)", 'max');
+      const result = await firstUser.getRawOne();
+      const done = result.max;
+
+      await this.findSession2(user_id, done)
+  }
+
+    //Находим сессию с этим числом игроков
+    //Добавляем игрока в сессию
+    async findSession2(user_id, done){
+    const maxplayerslobbyID = this.hexSessionsRepository
+        .createQueryBuilder("hex_session")
+        .select("hex_session.session_id", 'ID')
+        .where("hex_session.players_num = :numx", { numx: done})
+        .update("hex_session")
+        .set({
+            players_id: () => `array_append(players_id, '${String(user_id)}')`,
+            players_num: () => `"players_num" + ${Number(1)}`
+        })
+        .execute()
+    console.log(user_id)
+
+
+    ---
+    async findSession(user_id) {
+    // console.log(request.connection.remoteAddress, request.connection.remotePort, "ip2")
+          // //Находим максимальное число игроков из сессий
+          const firstUser = this.hexSessionsRepository
+              .createQueryBuilder("hex_session")
+              .select("MAX(hex_session.players_num)", 'max')
+          const result = await firstUser.getRawOne();
+          const done = result.max;
+          await this.findSession2(done, user_id)
+      }
+
+        //Находим сессию с этим числом игроков
+        //Добавляем игрока в сессию
+        async findSession2(done, user_id){
+        const maxplayerslobbyID = this.hexSessionsRepository
+            .createQueryBuilder("hex_session")
+            .select("hex_session.session_id", 'ID')
+            .where("hex_session.players_num = :numx", { numx: done})
+            .getOne();
+
+            console.log(maxplayerslobbyID, "idd")
+        const nk = this.hexSessionsRepository
+                .createQueryBuilder("hex_session")
+                .select()
+            .where('hex_session.session_id = :value', { value: Number(maxplayerslobbyID) })
+            .update("hex_session")
+            .set({
+                players_id: () => `array_append(players_id, '${String(user_id)}')`,
+                players_num: () => `"players_num" + ${Number(1)}`
+            })
+            .execute()
+        // console.log(user_id)
+
+         // let result = await maxplayerslobbyID.getRawOne()
+        // console.log(result)
+            if (done = 6) {
+            }
+        //Проверяем достаточно ли игроков сессии для запуска
+        //     const players_now = this.hexSessionsRepository
+        //         .createQueryBuilder("hex_session")
+
+        //Запускаем сервер для сессии, если игроков в лобби достаточно для запуска
+
+      }
